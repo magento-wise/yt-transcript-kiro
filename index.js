@@ -93,10 +93,23 @@ app.get("/transcript", async (req, res) => {
     const videoId = urlValidation.videoId;
     console.log(`✅ Valid video ID: ${videoId}`);
 
-    // Step 2: Get video metadata
-    console.log(`🔍 Extracting metadata...`);
-    const metadata = await metadataExtractor.getVideoMetadata(videoId);
-    console.log(`✅ Metadata extracted: ${metadata.title}`);
+    // Step 2: Get video metadata (optional - continue if it fails)
+    let metadata = null;
+    try {
+      console.log(`🔍 Extracting metadata...`);
+      metadata = await metadataExtractor.getVideoMetadata(videoId);
+      console.log(`✅ Metadata extracted: ${metadata.title}`);
+    } catch (metadataError) {
+      console.log(`⚠️ Metadata extraction failed: ${metadataError.message}`);
+      console.log(`⚠️ Continuing with transcript extraction anyway...`);
+      // Create minimal metadata object
+      metadata = {
+        videoId: videoId,
+        title: `Video ${videoId}`,
+        hasClosedCaptions: false,
+        availableLanguages: []
+      };
+    }
 
     // Step 3: Determine extraction strategy
     const preferences = {
@@ -107,7 +120,15 @@ app.get("/transcript", async (req, res) => {
 
     let strategies;
     if (method === "auto") {
-      strategies = strategySelector.selectStrategy(metadata, preferences);
+      // If no captions detected or metadata failed, prioritize transcript methods that don't need metadata
+      if (!metadata.hasClosedCaptions || metadata.title.startsWith('Video ')) {
+        strategies = ['youtube-transcript', 'youtube-caption-extractor'];
+        if (fallbackToAudio === "true") {
+          strategies.push('whisper-audio');
+        }
+      } else {
+        strategies = strategySelector.selectStrategy(metadata, preferences);
+      }
     } else {
       // Force specific method
       strategies = [method];
@@ -121,7 +142,7 @@ app.get("/transcript", async (req, res) => {
     // Step 4: Extract transcript
     console.log(`📝 Extracting transcript...`);
     const config = strategySelector.getMethodConfig(strategies[0], metadata, preferences);
-    
+
     const result = await transcriptExtractor.extractWithFallback(videoId, strategies, config);
 
     if (!result.success) {
